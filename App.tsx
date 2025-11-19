@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ProbeStatus, Target, User } from './types';
 import { runSimulationProbe } from './services/networkSimulator';
 import { storage } from './services/storage';
@@ -7,11 +7,12 @@ import AddTargetModal from './components/AddTargetModal';
 import StatsSummary from './components/StatsSummary';
 import BulkEditModal from './components/BulkEditModal';
 import Auth from './components/Auth';
-import { Plus, Activity, Server, LogOut, User as UserIcon, Globe, FileText } from 'lucide-react';
+import { Plus, Activity, Server, LogOut, User as UserIcon, Globe, FileText, LogIn } from 'lucide-react';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
+  const [isPublicView, setIsPublicView] = useState(true); // Default to public view
   
   const [globalTargets, setGlobalTargets] = useState<Target[]>([]);
   const [userTargets, setUserTargets] = useState<Target[]>([]);
@@ -20,6 +21,10 @@ const App: React.FC = () => {
   const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
   const [globalStatus, setGlobalStatus] = useState<'Operational' | 'Degraded' | 'Outage'>('Operational');
 
+  // Drag and Drop Refs
+  const dragItem = useRef<number | null>(null);
+  const dragOverItem = useRef<number | null>(null);
+
   // Check for existing session on mount
   useEffect(() => {
     const checkSession = async () => {
@@ -27,6 +32,7 @@ const App: React.FC = () => {
         const sessionUser = await storage.getCurrentSession();
         if (sessionUser) {
           setUser(sessionUser);
+          setIsPublicView(false); // If logged in, exit public view (or just show dashboard)
         }
       } catch (e) {
         console.error("Session check failed", e);
@@ -37,20 +43,27 @@ const App: React.FC = () => {
     checkSession();
   }, []);
 
-  // Load targets when user changes
+  // Load targets when user changes or view mode changes
   useEffect(() => {
     if (user) {
-      refreshTargets();
+      setGlobalTargets(storage.getGlobalTargets());
+      setUserTargets(storage.getUserTargets(user.id));
+    } else if (isPublicView) {
+      setGlobalTargets(storage.getGlobalTargets());
+      setUserTargets([]);
     } else {
       setGlobalTargets([]);
       setUserTargets([]);
     }
-  }, [user]);
+  }, [user, isPublicView]);
 
   const refreshTargets = () => {
-    if (!user) return;
-    setGlobalTargets(storage.getGlobalTargets());
-    setUserTargets(storage.getUserTargets(user.id));
+    if (user) {
+      setGlobalTargets(storage.getGlobalTargets());
+      setUserTargets(storage.getUserTargets(user.id));
+    } else if (isPublicView) {
+      setGlobalTargets(storage.getGlobalTargets());
+    }
   };
 
   // Helper for simulation logic
@@ -88,27 +101,30 @@ const App: React.FC = () => {
 
   // Probe Simulation Loop
   useEffect(() => {
-    if (!user) return;
+    // Allow simulation if user is logged in OR if in public view
+    if (!user && !isPublicView) return;
 
     const interval = setInterval(() => {
-      // Process Global Targets
+      // Always process Global Targets if we are viewing them
       setGlobalTargets(prev => {
         const updated = prev.map(processTargetSimulation);
         storage.saveTargets(updated); 
         return updated;
       });
 
-      // Process User Targets
-      setUserTargets(prev => {
-        const updated = prev.map(processTargetSimulation);
-        storage.saveTargets(updated);
-        return updated;
-      });
+      // Only process User Targets if logged in
+      if (user) {
+        setUserTargets(prev => {
+          const updated = prev.map(processTargetSimulation);
+          storage.saveTargets(updated);
+          return updated;
+        });
+      }
 
     }, 2000); 
 
     return () => clearInterval(interval);
-  }, [user]);
+  }, [user, isPublicView]);
 
   // Global Status Calculation
   useEffect(() => {
@@ -126,10 +142,13 @@ const App: React.FC = () => {
   const handleAddTarget = (name: string, url: string, isGlobal: boolean) => {
     if (!user) return;
 
+    const currentListCount = isGlobal ? globalTargets.length : userTargets.length;
+
     const newTarget: Target = {
       id: crypto.randomUUID(),
       userId: user.id,
       isGlobal: isGlobal,
+      order: currentListCount, // Append to end
       name,
       url,
       status: ProbeStatus.Active,
@@ -149,32 +168,25 @@ const App: React.FC = () => {
   const handleBulkUpdate = (parsedTargets: {name: string, url: string}[]) => {
     if (!user) return;
 
-    // Sync logic: 
-    // 1. Identify targets to delete (present in userTargets but not in parsed)
-    // 2. Identify targets to add (present in parsed but not in userTargets by URL)
-    // 3. Identify targets to update (present in both)
-    
-    // Note: We are only bulk editing USER targets, not global.
-    // Fix: Explicitly type the map entries as a tuple [string, Target] to ensure Map<string, Target> inference.
     const currentMap = new Map(userTargets.map(t => [t.url, t] as [string, Target]));
     const newTargetsList: Target[] = [];
     const processedUrls = new Set<string>();
 
-    parsedTargets.forEach(pt => {
+    parsedTargets.forEach((pt, index) => {
       processedUrls.add(pt.url);
       if (currentMap.has(pt.url)) {
-        // Update existing (preserve history and ID)
         const existing = currentMap.get(pt.url)!;
         newTargetsList.push({
           ...existing,
-          name: pt.name 
+          name: pt.name,
+          order: index // Update order based on file order
         });
       } else {
-        // Create new
         newTargetsList.push({
           id: crypto.randomUUID(),
           userId: user.id,
           isGlobal: false,
+          order: index, // New item order
           name: pt.name,
           url: pt.url,
           status: ProbeStatus.Active,
@@ -189,12 +201,6 @@ const App: React.FC = () => {
       }
     });
 
-    // Delete targets that are in currentMap but not in processedUrls
-    // We achieve this by simply not including them in newTargetsList and overwriting storage.
-    // However, `storage.saveTargets` merges. `storage.deleteTarget` removes one by one.
-    // To handle bulk replace correctly with the current simple storage service,
-    // we should first delete the ones missing, then save the new list.
-    
     const toDelete = userTargets.filter(t => !processedUrls.has(t.url));
     toDelete.forEach(t => storage.deleteTarget(t.id));
     
@@ -211,9 +217,67 @@ const App: React.FC = () => {
   const handleLogout = () => {
     storage.logout();
     setUser(null);
-    setGlobalTargets([]);
+    setIsPublicView(true); // Revert to public view on logout
+    setGlobalTargets(storage.getGlobalTargets()); // Reset to just global
     setUserTargets([]);
   };
+
+  // --- Drag and Drop Handlers ---
+
+  const onDragStart = (e: React.DragEvent, index: number) => {
+    dragItem.current = index;
+    // Firefox requires dataTransfer to be set for dragging to work
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/html", e.currentTarget.innerHTML);
+    e.dataTransfer.setDragImage(e.currentTarget as Element, 20, 20);
+  };
+
+  const onDragEnter = (e: React.DragEvent, index: number) => {
+    dragOverItem.current = index;
+    e.preventDefault();
+  };
+
+  const onDragEnd = (listType: 'global' | 'user') => {
+    const dragIndex = dragItem.current;
+    const dragOverIndex = dragOverItem.current;
+
+    if (dragIndex === null || dragOverIndex === null || dragIndex === dragOverIndex) {
+      dragItem.current = null;
+      dragOverItem.current = null;
+      return;
+    }
+
+    const list = listType === 'global' ? globalTargets : userTargets;
+    const items = [...list];
+    
+    // Remove dragged item
+    const draggedItemContent = items[dragIndex];
+    items.splice(dragIndex, 1);
+    
+    // Insert at new position
+    items.splice(dragOverIndex, 0, draggedItemContent);
+
+    // Update 'order' property for all items
+    const reordered = items.map((item, index) => ({
+      ...item,
+      order: index
+    }));
+
+    // Update State
+    if (listType === 'global') {
+      setGlobalTargets(reordered);
+    } else {
+      setUserTargets(reordered);
+    }
+
+    // Persist to Storage
+    storage.saveTargets(reordered);
+
+    // Reset refs
+    dragItem.current = null;
+    dragOverItem.current = null;
+  };
+
 
   // Loading Screen
   if (checkingSession) {
@@ -224,12 +288,12 @@ const App: React.FC = () => {
     );
   }
 
-  // Auth Screen
-  if (!user) {
-    return <Auth onLogin={setUser} />;
+  // Auth Screen (Show only if no user AND not in public view)
+  if (!user && !isPublicView) {
+    return <Auth onLogin={(u) => { setUser(u); setIsPublicView(false); }} onPublicView={() => setIsPublicView(true)} />;
   }
 
-  // Dashboard
+  // Dashboard (Rendered if User OR Public View)
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-indigo-500/30">
       
@@ -243,6 +307,11 @@ const App: React.FC = () => {
             <h1 className="text-xl font-bold tracking-tight text-slate-100">
               NetSentinel <span className="text-indigo-400">MTR</span>
             </h1>
+            {isPublicView && !user && (
+               <span className="ml-2 px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-[10px] text-slate-400 uppercase tracking-wider font-bold">
+                 Public Status
+               </span>
+            )}
           </div>
           
           <div className="flex items-center gap-4">
@@ -253,37 +322,49 @@ const App: React.FC = () => {
              
              <div className="h-6 w-px bg-slate-800 hidden md:block"></div>
 
-             <div className="flex items-center gap-2 text-sm text-slate-300 mr-2">
-                <div className={`p-1 rounded-full ${user.role === 'admin' ? 'bg-indigo-500/20 text-indigo-400' : 'bg-slate-800 text-slate-500'}`}>
-                   <UserIcon size={14} />
+             {user ? (
+               <>
+                <div className="flex items-center gap-2 text-sm text-slate-300 mr-2">
+                    <div className={`p-1 rounded-full ${user.role === 'admin' ? 'bg-indigo-500/20 text-indigo-400' : 'bg-slate-800 text-slate-500'}`}>
+                      <UserIcon size={14} />
+                    </div>
+                    <span className="hidden sm:inline">{user.name}</span>
                 </div>
-                <span className="hidden sm:inline">{user.name}</span>
-             </div>
 
-             <button 
-               onClick={handleLogout}
-               className="text-slate-400 hover:text-white transition-colors p-2 hover:bg-slate-800 rounded-lg"
-               title="Sign Out"
-             >
-               <LogOut size={18} />
-             </button>
+                <button 
+                  onClick={handleLogout}
+                  className="text-slate-400 hover:text-white transition-colors p-2 hover:bg-slate-800 rounded-lg"
+                  title="Sign Out"
+                >
+                  <LogOut size={18} />
+                </button>
 
-             <div className="flex items-center gap-2 ml-2">
-                <button 
-                  onClick={() => setIsBulkEditOpen(true)}
-                  className="bg-slate-800 hover:bg-slate-700 text-slate-200 p-2 rounded-lg transition-all"
-                  title="Bulk Edit via Text"
-                >
-                  <FileText size={20} />
-                </button>
-                <button 
-                  onClick={() => setIsModalOpen(true)}
-                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all shadow-lg shadow-indigo-500/20"
-                >
-                  <Plus size={16} />
-                  <span className="hidden sm:inline">Add Target</span>
-                </button>
-             </div>
+                <div className="flex items-center gap-2 ml-2">
+                    <button 
+                      onClick={() => setIsBulkEditOpen(true)}
+                      className="bg-slate-800 hover:bg-slate-700 text-slate-200 p-2 rounded-lg transition-all"
+                      title="Bulk Edit via Text"
+                    >
+                      <FileText size={20} />
+                    </button>
+                    <button 
+                      onClick={() => setIsModalOpen(true)}
+                      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all shadow-lg shadow-indigo-500/20"
+                    >
+                      <Plus size={16} />
+                      <span className="hidden sm:inline">Add Target</span>
+                    </button>
+                </div>
+               </>
+             ) : (
+               <button 
+                 onClick={() => setIsPublicView(false)}
+                 className="flex items-center gap-2 text-indigo-400 hover:text-white transition-colors text-sm font-medium"
+               >
+                 <LogIn size={16} />
+                 Sign In
+               </button>
+             )}
           </div>
         </div>
       </header>
@@ -303,12 +384,18 @@ const App: React.FC = () => {
             <StatsSummary targets={globalTargets} type="Global" />
 
             <div className="space-y-4">
-                {globalTargets.map(target => (
+                {globalTargets.map((target, index) => (
                     <TargetCard 
                         key={target.id} 
                         target={target} 
                         onDelete={handleDeleteTarget}
-                        isReadOnly={user.role !== 'admin'}
+                        // Draggable if admin
+                        draggable={user?.role === 'admin'}
+                        onDragStart={(e) => onDragStart(e, index)}
+                        onDragEnter={(e) => onDragEnter(e, index)}
+                        onDragEnd={() => onDragEnd('global')}
+                        // Read only logic
+                        isReadOnly={!user || user.role !== 'admin'}
                     />
                 ))}
                 {globalTargets.length === 0 && (
@@ -319,42 +406,49 @@ const App: React.FC = () => {
             </div>
         </div>
 
-        {/* Divider */}
-        <div className="h-px bg-gradient-to-r from-transparent via-slate-800 to-transparent my-12"></div>
+        {/* User List Section - Only show if logged in */}
+        {user && (
+          <>
+            <div className="h-px bg-gradient-to-r from-transparent via-slate-800 to-transparent my-12"></div>
 
-        {/* User List Section */}
-        <div className="mb-10">
-             <h2 className="text-lg font-semibold text-slate-100 mb-4 flex items-center gap-2">
-                <Server className="text-emerald-400" size={20}/>
-                My Targets
-            </h2>
-            
-            <StatsSummary targets={userTargets} type="Personal" />
+            <div className="mb-10">
+                <h2 className="text-lg font-semibold text-slate-100 mb-4 flex items-center gap-2">
+                    <Server className="text-emerald-400" size={20}/>
+                    My Targets
+                </h2>
+                
+                <StatsSummary targets={userTargets} type="Personal" />
 
-            <div className="space-y-4">
-            {userTargets.map(target => (
-                <TargetCard 
-                key={target.id} 
-                target={target} 
-                onDelete={handleDeleteTarget}
-                />
-            ))}
-            
-            {userTargets.length === 0 && (
-                <div className="text-center py-10 border-2 border-dashed border-slate-800 rounded-xl bg-slate-900/30">
-                <Server className="mx-auto h-10 w-10 text-slate-600 mb-4" />
-                <p className="text-slate-400 font-medium">No personal targets configured</p>
-                <button 
-                    onClick={() => setIsModalOpen(true)}
-                    className="mt-4 inline-flex items-center gap-2 text-indigo-400 hover:text-indigo-300 text-sm font-medium"
-                >
-                    <Plus size={16} />
-                    Add your first target
-                </button>
+                <div className="space-y-4">
+                {userTargets.map((target, index) => (
+                    <TargetCard 
+                      key={target.id} 
+                      target={target} 
+                      onDelete={handleDeleteTarget}
+                      draggable={true}
+                      onDragStart={(e) => onDragStart(e, index)}
+                      onDragEnter={(e) => onDragEnter(e, index)}
+                      onDragEnd={() => onDragEnd('user')}
+                    />
+                ))}
+                
+                {userTargets.length === 0 && (
+                    <div className="text-center py-10 border-2 border-dashed border-slate-800 rounded-xl bg-slate-900/30">
+                    <Server className="mx-auto h-10 w-10 text-slate-600 mb-4" />
+                    <p className="text-slate-400 font-medium">No personal targets configured</p>
+                    <button 
+                        onClick={() => setIsModalOpen(true)}
+                        className="mt-4 inline-flex items-center gap-2 text-indigo-400 hover:text-indigo-300 text-sm font-medium"
+                    >
+                        <Plus size={16} />
+                        Add your first target
+                    </button>
+                    </div>
+                )}
                 </div>
-            )}
             </div>
-        </div>
+          </>
+        )}
 
         <div className="mt-8 text-center">
            <p className="text-xs text-slate-600">
@@ -364,19 +458,23 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      <AddTargetModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        onAdd={handleAddTarget}
-        isAdmin={user.role === 'admin'}
-      />
+      {user && (
+        <>
+          <AddTargetModal 
+            isOpen={isModalOpen} 
+            onClose={() => setIsModalOpen(false)} 
+            onAdd={handleAddTarget}
+            isAdmin={user.role === 'admin'}
+          />
 
-      <BulkEditModal
-        isOpen={isBulkEditOpen}
-        onClose={() => setIsBulkEditOpen(false)}
-        targets={userTargets}
-        onSave={handleBulkUpdate}
-      />
+          <BulkEditModal
+            isOpen={isBulkEditOpen}
+            onClose={() => setIsBulkEditOpen(false)}
+            targets={userTargets}
+            onSave={handleBulkUpdate}
+          />
+        </>
+      )}
     </div>
   );
 };

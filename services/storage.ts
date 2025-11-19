@@ -17,6 +17,7 @@ const GLOBAL_TARGETS_SEED: Target[] = [
     id: 'global-google-dns',
     userId: ADMIN_ID,
     isGlobal: true,
+    order: 0,
     name: 'Google DNS',
     url: '8.8.8.8',
     status: ProbeStatus.Active,
@@ -32,6 +33,7 @@ const GLOBAL_TARGETS_SEED: Target[] = [
     id: 'global-opendns',
     userId: ADMIN_ID,
     isGlobal: true,
+    order: 1,
     name: 'OpenDNS',
     url: '208.67.222.222',
     status: ProbeStatus.Active,
@@ -47,8 +49,25 @@ const GLOBAL_TARGETS_SEED: Target[] = [
     id: 'global-cloudflare',
     userId: ADMIN_ID,
     isGlobal: true,
+    order: 2,
     name: 'Cloudflare DNS',
     url: '1.1.1.1',
+    status: ProbeStatus.Active,
+    history: [],
+    currentQualityScore: 100,
+    uptimePercentage: 100,
+    createdAt: Date.now(),
+    totalProbes: 0,
+    totalPacketsSent: 0,
+    totalPacketsLost: 0
+  },
+  {
+    id: 'global-quad9',
+    userId: ADMIN_ID,
+    isGlobal: true,
+    order: 3,
+    name: 'Quad9 DNS',
+    url: '9.9.9.9',
     status: ProbeStatus.Active,
     history: [],
     currentQualityScore: 100,
@@ -79,12 +98,21 @@ export const storage = {
       localStorage.setItem(USERS_KEY, JSON.stringify(users));
     }
 
-    // Seed Global Targets
+    // Seed Global Targets - Merge/Ensure existence
     const targets = storage.getAllTargets();
-    const hasGlobal = targets.some(t => t.isGlobal);
-    if (!hasGlobal) {
-      const newTargets = [...targets, ...GLOBAL_TARGETS_SEED];
-      localStorage.setItem(TARGETS_KEY, JSON.stringify(newTargets));
+    let updatedTargets = [...targets];
+    let changed = false;
+
+    GLOBAL_TARGETS_SEED.forEach(seed => {
+      const exists = updatedTargets.find(t => t.id === seed.id);
+      if (!exists) {
+        updatedTargets.push(seed);
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      localStorage.setItem(TARGETS_KEY, JSON.stringify(updatedTargets));
     }
   },
 
@@ -148,6 +176,7 @@ export const storage = {
         id: crypto.randomUUID(),
         userId: newUser.id,
         isGlobal: false,
+        order: 0,
         name: 'Local Gateway',
         url: '192.168.1.1',
         status: ProbeStatus.Active,
@@ -163,6 +192,7 @@ export const storage = {
         id: crypto.randomUUID(),
         userId: newUser.id,
         isGlobal: false,
+        order: 1,
         name: 'Example Web',
         url: 'example.com',
         status: ProbeStatus.Active,
@@ -205,15 +235,15 @@ export const storage = {
 
   getGlobalTargets: (): Target[] => {
     const all = storage.getAllTargets();
-    return all.filter(t => t.isGlobal);
+    return all.filter(t => t.isGlobal).sort((a, b) => (a.order || 0) - (b.order || 0));
   },
 
   getUserTargets: (userId: string): Target[] => {
     const all = storage.getAllTargets();
     // Users see their own targets
-    // Admin sees their own targets (which might include global ones if we filtered by ID, but we filter by isGlobal first)
-    // For simplicity, this function returns 'Personal' targets (not marked global)
-    return all.filter(t => t.userId === userId && !t.isGlobal);
+    return all
+      .filter(t => t.userId === userId && !t.isGlobal)
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
   },
 
   saveTargets: (targetsToSave: Target[]) => {

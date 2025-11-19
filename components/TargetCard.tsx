@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Target } from '../types';
-import { ChevronDown, ChevronUp, Globe, AlertCircle, Cpu, Shield, BarChart3 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Globe, AlertCircle, Cpu, Shield, BarChart3, GripVertical } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip } from 'recharts';
 import { analyzeNetworkHealth } from '../services/geminiService';
 
@@ -8,9 +8,21 @@ interface TargetCardProps {
   target: Target;
   onDelete: (id: string) => void;
   isReadOnly?: boolean;
+  draggable?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragEnter?: (e: React.DragEvent) => void;
+  onDragEnd?: (e: React.DragEvent) => void;
 }
 
-const TargetCard: React.FC<TargetCardProps> = ({ target, onDelete, isReadOnly = false }) => {
+const TargetCard: React.FC<TargetCardProps> = ({ 
+  target, 
+  onDelete, 
+  isReadOnly = false,
+  draggable = false,
+  onDragStart,
+  onDragEnter,
+  onDragEnd
+}) => {
   const [expanded, setExpanded] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [loadingAi, setLoadingAi] = useState(false);
@@ -42,13 +54,27 @@ const TargetCard: React.FC<TargetCardProps> = ({ target, onDelete, isReadOnly = 
   if (!lastResult) return <div className="p-4 bg-slate-900 rounded-lg animate-pulse">Initializing probe...</div>;
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-300">
+    <div 
+      className={`bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 ${draggable ? 'cursor-move active:cursor-grabbing active:scale-[0.99] active:bg-slate-800' : ''}`}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnter={onDragEnter}
+      onDragEnd={onDragEnd}
+    >
       {/* Summary Header */}
       <div 
         className="p-4 flex flex-col md:flex-row md:items-center justify-between cursor-pointer bg-slate-900 hover:bg-slate-800/50 transition-colors"
         onClick={() => setExpanded(!expanded)}
       >
         <div className="flex items-center gap-4 mb-4 md:mb-0">
+          
+          {/* Drag Handle */}
+          {draggable && !isReadOnly && (
+            <div className="text-slate-600 hover:text-slate-400 cursor-grab active:cursor-grabbing">
+              <GripVertical size={20} />
+            </div>
+          )}
+
           <div className={`w-3 h-3 rounded-full ${statusColor} shadow-[0_0_8px_rgba(255,255,255,0.3)]`} />
           <div>
             <div className="flex items-center gap-2">
@@ -92,7 +118,7 @@ const TargetCard: React.FC<TargetCardProps> = ({ target, onDelete, isReadOnly = 
 
       {/* Detailed Breakdown (Hidden Pulldown) */}
       {expanded && (
-        <div className="border-t border-slate-800 bg-slate-950/50 p-6 animate-in slide-in-from-top-2 duration-200">
+        <div className="border-t border-slate-800 bg-slate-950/50 p-6 animate-in slide-in-from-top-2 duration-200 cursor-default" onClick={(e) => e.stopPropagation()}>
           
           {/* Quick Charts Area */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">

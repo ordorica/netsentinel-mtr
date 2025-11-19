@@ -1,6 +1,6 @@
 import React from 'react';
 import { Target, ProbeStatus } from '../types';
-import { Activity, ArrowDown, ArrowUp, Server, ShieldCheck, Signal } from 'lucide-react';
+import { Activity, Server, ShieldCheck, Signal } from 'lucide-react';
 
 interface StatsSummaryProps {
   targets: Target[];
@@ -10,7 +10,6 @@ interface StatsSummaryProps {
 const StatsSummary: React.FC<StatsSummaryProps> = ({ targets, type }) => {
   // Calculate aggregates
   const totalTargets = targets.length;
-  const activeTargets = targets.filter(t => t.status === ProbeStatus.Active).length; // Simplified active check
   
   // Calculate functional uptime (targets not showing 100% loss currently)
   const healthyTargets = targets.filter(t => {
@@ -48,7 +47,6 @@ const StatsSummary: React.FC<StatsSummaryProps> = ({ targets, type }) => {
         </div>
         <div className="mt-2 flex items-center gap-1 text-xs text-slate-400">
            <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">5-Nines</span>
-           <span>target metric</span>
         </div>
       </div>
 
@@ -60,13 +58,11 @@ const StatsSummary: React.FC<StatsSummaryProps> = ({ targets, type }) => {
         <div>
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Packet Flow</p>
           <div className="mt-1">
-             <div className="flex justify-between items-end">
+             <div className="flex justify-between items-end mb-1">
                <span className="text-lg font-mono text-slate-200">{totalPacketsSent.toLocaleString()}</span>
-               <ArrowUp size={14} className="text-slate-600 mb-1.5" />
              </div>
               <div className="flex justify-between items-end">
                <span className="text-sm font-mono text-slate-400">{totalPacketsLost.toLocaleString()}</span>
-               <ArrowDown size={14} className="text-red-500/50 mb-1" />
              </div>
           </div>
         </div>

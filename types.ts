@@ -30,6 +30,7 @@ export interface Target {
   id: string;
   userId: string; // Link to User
   isGlobal?: boolean; // If true, visible to all, editable only by admin
+  order?: number; // Position in list
   url: string;
   name: string;
   status: ProbeStatus;
