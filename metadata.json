@@ -1,0 +1,5 @@
+{
+  "name": "NetSentinel MTR",
+  "description": "A modern web-based network monitoring tool visualizing MTR-style statistics with AI-powered insights.",
+  "requestFramePermissions": []
+}
