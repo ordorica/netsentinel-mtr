@@ -27,7 +27,10 @@ const GLOBAL_TARGETS_SEED: Target[] = [
     createdAt: Date.now(),
     totalProbes: 0,
     totalPacketsSent: 0,
-    totalPacketsLost: 0
+    totalPacketsLost: 0,
+    probeConfig: { packetSize: 64, probeCount: 1, timeout: 1000 },
+    slaTarget: 99.999,
+    aiAnalysisHistory: []
   },
   {
     id: 'global-opendns',
@@ -43,7 +46,10 @@ const GLOBAL_TARGETS_SEED: Target[] = [
     createdAt: Date.now(),
     totalProbes: 0,
     totalPacketsSent: 0,
-    totalPacketsLost: 0
+    totalPacketsLost: 0,
+    probeConfig: { packetSize: 64, probeCount: 1, timeout: 1000 },
+    slaTarget: 99.999,
+    aiAnalysisHistory: []
   },
   {
     id: 'global-cloudflare',
@@ -59,7 +65,10 @@ const GLOBAL_TARGETS_SEED: Target[] = [
     createdAt: Date.now(),
     totalProbes: 0,
     totalPacketsSent: 0,
-    totalPacketsLost: 0
+    totalPacketsLost: 0,
+    probeConfig: { packetSize: 64, probeCount: 1, timeout: 1000 },
+    slaTarget: 99.999,
+    aiAnalysisHistory: []
   },
   {
     id: 'global-quad9',
@@ -75,7 +84,10 @@ const GLOBAL_TARGETS_SEED: Target[] = [
     createdAt: Date.now(),
     totalProbes: 0,
     totalPacketsSent: 0,
-    totalPacketsLost: 0
+    totalPacketsLost: 0,
+    probeConfig: { packetSize: 64, probeCount: 1, timeout: 1000 },
+    slaTarget: 99.999,
+    aiAnalysisHistory: []
   }
 ];
 
@@ -108,6 +120,12 @@ export const storage = {
       if (!exists) {
         updatedTargets.push(seed);
         changed = true;
+      } else {
+        // Ensure legacy targets have SLA
+        if (exists.slaTarget === undefined) {
+           exists.slaTarget = 99.999;
+           changed = true;
+        }
       }
     });
 
@@ -186,7 +204,10 @@ export const storage = {
         createdAt: Date.now(),
         totalProbes: 0,
         totalPacketsSent: 0,
-        totalPacketsLost: 0
+        totalPacketsLost: 0,
+        probeConfig: { packetSize: 64, probeCount: 1, timeout: 500 },
+        slaTarget: 99.9,
+        aiAnalysisHistory: []
       },
       {
         id: crypto.randomUUID(),
@@ -202,7 +223,10 @@ export const storage = {
         createdAt: Date.now(),
         totalProbes: 0,
         totalPacketsSent: 0,
-        totalPacketsLost: 0
+        totalPacketsLost: 0,
+        probeConfig: { packetSize: 128, probeCount: 3, timeout: 2000 },
+        slaTarget: 99.999,
+        aiAnalysisHistory: []
       }
     ];
     
@@ -251,6 +275,10 @@ export const storage = {
     const targetMap = new Map(allTargets.map(t => [t.id, t]));
     
     targetsToSave.forEach(t => {
+      // Ensure aiAnalysisHistory exists if missing (migration safety)
+      if (!t.aiAnalysisHistory) {
+        t.aiAnalysisHistory = [];
+      }
       targetMap.set(t.id, t);
     });
     

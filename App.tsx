@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ProbeStatus, Target, User } from './types';
+import { ProbeStatus, Target, User, ProbeConfig } from './types';
 import { runSimulationProbe } from './services/networkSimulator';
 import { storage } from './services/storage';
 import TargetCard from './components/TargetCard';
@@ -7,6 +7,7 @@ import AddTargetModal from './components/AddTargetModal';
 import StatsSummary from './components/StatsSummary';
 import BulkEditModal from './components/BulkEditModal';
 import Auth from './components/Auth';
+import TargetSettingsModal from './components/TargetSettingsModal';
 import { Plus, Activity, Server, LogOut, User as UserIcon, Globe, FileText, LogIn } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -20,6 +21,9 @@ const App: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
   const [globalStatus, setGlobalStatus] = useState<'Operational' | 'Degraded' | 'Outage'>('Operational');
+
+  // Settings Modal State
+  const [editingTarget, setEditingTarget] = useState<Target | null>(null);
 
   // Drag and Drop Refs
   const dragItem = useRef<number | null>(null);
@@ -70,7 +74,11 @@ const App: React.FC = () => {
   const processTargetSimulation = (target: Target): Target => {
     if (target.status !== ProbeStatus.Active) return target;
 
-    const result = runSimulationProbe(target.url);
+    // Use Custom Config or Default
+    const probeConfig = target.probeConfig || { packetSize: 64, probeCount: 1, timeout: 1000 };
+    
+    // Simulate probe using config
+    const result = runSimulationProbe(target.url, probeConfig);
     
     // Keep history manageable (last 50 points)
     const newHistory = [...target.history, result].slice(-50);
@@ -84,8 +92,8 @@ const App: React.FC = () => {
     const isUp = result.packetLoss < 50;
     const newUptime = (target.uptimePercentage * 0.95) + ((isUp ? 100 : 0) * 0.05);
 
-    // Cumulative Stats for 5 Nines (Simulated: each probe is ~100 packets)
-    const PACKETS_PER_PROBE = 100; 
+    // Cumulative Stats for 5 Nines (Simulated: packets = probes * count)
+    const PACKETS_PER_PROBE = 100 * (probeConfig.probeCount || 1); 
     const packetsLost = Math.round(PACKETS_PER_PROBE * (result.packetLoss / 100));
 
     return {
@@ -95,7 +103,8 @@ const App: React.FC = () => {
       uptimePercentage: newUptime,
       totalProbes: (target.totalProbes || 0) + 1,
       totalPacketsSent: (target.totalPacketsSent || 0) + PACKETS_PER_PROBE,
-      totalPacketsLost: (target.totalPacketsLost || 0) + packetsLost
+      totalPacketsLost: (target.totalPacketsLost || 0) + packetsLost,
+      aiAnalysisHistory: target.aiAnalysisHistory || []
     };
   };
 
@@ -139,7 +148,7 @@ const App: React.FC = () => {
     else setGlobalStatus('Operational');
   }, [globalTargets, userTargets]);
 
-  const handleAddTarget = (name: string, url: string, isGlobal: boolean) => {
+  const handleAddTarget = (name: string, url: string, isGlobal: boolean, config: ProbeConfig, slaTarget: number) => {
     if (!user) return;
 
     const currentListCount = isGlobal ? globalTargets.length : userTargets.length;
@@ -158,24 +167,67 @@ const App: React.FC = () => {
       createdAt: Date.now(),
       totalProbes: 0,
       totalPacketsSent: 0,
-      totalPacketsLost: 0
+      totalPacketsLost: 0,
+      probeConfig: config,
+      slaTarget: slaTarget,
+      aiAnalysisHistory: []
     };
     
     storage.saveTargets([newTarget]);
     refreshTargets();
   };
 
+  const handleUpdateConfig = (targetId: string, newConfig: ProbeConfig, newSlaTarget: number) => {
+    // Find target in either list
+    const all = [...globalTargets, ...userTargets];
+    const target = all.find(t => t.id === targetId);
+    
+    if (target) {
+        const updatedTarget = { 
+          ...target, 
+          probeConfig: newConfig,
+          slaTarget: newSlaTarget
+        };
+        storage.saveTargets([updatedTarget]);
+        refreshTargets();
+    }
+  };
+
+  const handleAiAnalysisComplete = (targetId: string, analysisText: string) => {
+    const all = [...globalTargets, ...userTargets];
+    const target = all.find(t => t.id === targetId);
+    
+    if (target) {
+      // Prepend new analysis to history
+      const newEntry = {
+        targetId,
+        analysis: analysisText,
+        timestamp: Date.now()
+      };
+      
+      const updatedHistory = [newEntry, ...(target.aiAnalysisHistory || [])].slice(0, 5); // Keep last 5
+      const updatedTarget = { ...target, aiAnalysisHistory: updatedHistory };
+      
+      storage.saveTargets([updatedTarget]);
+      refreshTargets();
+    }
+  };
+
   const handleBulkUpdate = (parsedTargets: {name: string, url: string}[]) => {
     if (!user) return;
 
-    const currentMap = new Map(userTargets.map(t => [t.url, t] as [string, Target]));
+    // Use explicit loop to create map to avoid TS inference issues
+    const currentMap = new Map<string, Target>();
+    userTargets.forEach(t => currentMap.set(t.url, t));
+
     const newTargetsList: Target[] = [];
     const processedUrls = new Set<string>();
 
     parsedTargets.forEach((pt, index) => {
       processedUrls.add(pt.url);
-      if (currentMap.has(pt.url)) {
-        const existing = currentMap.get(pt.url)!;
+      const existing = currentMap.get(pt.url);
+      
+      if (existing) {
         newTargetsList.push({
           ...existing,
           name: pt.name,
@@ -196,7 +248,10 @@ const App: React.FC = () => {
           createdAt: Date.now(),
           totalProbes: 0,
           totalPacketsSent: 0,
-          totalPacketsLost: 0
+          totalPacketsLost: 0,
+          probeConfig: { packetSize: 64, probeCount: 1, timeout: 1000 },
+          slaTarget: 99.999, // Default SLA for bulk items
+          aiAnalysisHistory: []
         });
       }
     });
@@ -389,6 +444,8 @@ const App: React.FC = () => {
                         key={target.id} 
                         target={target} 
                         onDelete={handleDeleteTarget}
+                        onEditConfig={(t) => setEditingTarget(t)}
+                        onAnalyzeComplete={handleAiAnalysisComplete}
                         // Draggable if admin
                         draggable={user?.role === 'admin'}
                         onDragStart={(e) => onDragStart(e, index)}
@@ -425,6 +482,8 @@ const App: React.FC = () => {
                       key={target.id} 
                       target={target} 
                       onDelete={handleDeleteTarget}
+                      onEditConfig={(t) => setEditingTarget(t)}
+                      onAnalyzeComplete={handleAiAnalysisComplete}
                       draggable={true}
                       onDragStart={(e) => onDragStart(e, index)}
                       onDragEnter={(e) => onDragEnter(e, index)}
@@ -465,6 +524,13 @@ const App: React.FC = () => {
             onClose={() => setIsModalOpen(false)} 
             onAdd={handleAddTarget}
             isAdmin={user.role === 'admin'}
+          />
+
+          <TargetSettingsModal 
+            isOpen={!!editingTarget}
+            onClose={() => setEditingTarget(null)}
+            target={editingTarget}
+            onSave={handleUpdateConfig}
           />
 
           <BulkEditModal

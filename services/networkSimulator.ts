@@ -1,15 +1,33 @@
-import { HopData, ProbeResult } from '../types';
+import { HopData, ProbeResult, ProbeConfig } from '../types';
 
 // Helper to generate random float
 const random = (min: number, max: number) => Math.random() * (max - min) + min;
 
+// Default config if none provided
+const DEFAULT_CONFIG: ProbeConfig = {
+  packetSize: 64,
+  probeCount: 1,
+  timeout: 1000
+};
+
 // Simulate a single hop
-const generateHop = (id: number, baseLatency: number, volatility: number): HopData => {
+const generateHop = (id: number, baseLatency: number, volatility: number, config: ProbeConfig): HopData => {
   const noise = random(0, volatility);
-  const currentMs = baseLatency + noise;
+  let currentMs = baseLatency + noise;
   
+  // Packet Size Penalty (Simulated Serialization Delay)
+  // Assume ~0.05ms penalty per 100 bytes over standard 64 bytes
+  if (config.packetSize > 64) {
+    const sizePenalty = ((config.packetSize - 64) / 100) * 0.05;
+    currentMs += sizePenalty;
+  }
+
   // Simulate occasional packet loss
-  const isLoss = Math.random() > 0.98; 
+  // If latency exceeds timeout, it's a loss
+  let isLoss = Math.random() > 0.98; 
+  if (currentMs > config.timeout) {
+    isLoss = true;
+  }
   
   return {
     id,
@@ -25,7 +43,7 @@ const generateHop = (id: number, baseLatency: number, volatility: number): HopDa
   };
 };
 
-export const runSimulationProbe = (url: string): ProbeResult => {
+export const runSimulationProbe = (url: string, config: ProbeConfig = DEFAULT_CONFIG): ProbeResult => {
   const hopCount = 8;
   const baseBaseLatency = random(10, 30); // Starting latency
   const hops: HopData[] = [];
@@ -37,7 +55,7 @@ export const runSimulationProbe = (url: string): ProbeResult => {
     cumLatency += random(2, 10);
     // Volatility increases with distance (internet jitter)
     const volatility = random(1, 5) + (i * 0.5);
-    hops.push(generateHop(i, cumLatency, volatility));
+    hops.push(generateHop(i, cumLatency, volatility, config));
   }
 
   const finalHop = hops[hops.length - 1];
@@ -47,7 +65,29 @@ export const runSimulationProbe = (url: string): ProbeResult => {
   const jitter = Math.abs(finalHop.lastMs - finalHop.avgMs);
   
   // Simulate end-to-end loss aggregation
-  const totalLoss = hops.reduce((acc, hop) => acc + (hop.lossPercent > 0 ? 1 : 0), 0) > 0 ? random(1, 5) : 0;
+  let totalLoss = hops.reduce((acc, hop) => acc + (hop.lossPercent > 0 ? 1 : 0), 0) > 0 ? random(1, 5) : 0;
+  
+  // Strict timeout check for end-to-end
+  if (totalLatency > config.timeout) {
+    totalLoss = 100;
+  }
+
+  // Determine HTTP Status Code
+  let httpStatus = 200;
+  
+  // Logic to simulate realistic HTTP statuses
+  const rand = Math.random();
+
+  if (totalLoss > 20) {
+    // High packet loss correlates with connectivity issues
+    if (rand > 0.4) httpStatus = 503; // Service Unavailable
+    else if (rand > 0.7) httpStatus = 504; // Gateway Timeout
+  } else {
+    // Mostly healthy, but occasional application or client errors
+    if (rand > 0.99) httpStatus = 500; // Internal Server Error
+    else if (rand > 0.985) httpStatus = 404; // Not Found
+    else if (rand > 0.98) httpStatus = 403; // Forbidden
+  }
 
   return {
     timestamp: Date.now(),
@@ -55,6 +95,6 @@ export const runSimulationProbe = (url: string): ProbeResult => {
     jitter: jitter,
     packetLoss: totalLoss,
     hops: hops,
-    httpStatus: 200,
+    httpStatus: httpStatus,
   };
 };

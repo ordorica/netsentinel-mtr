@@ -23,7 +23,19 @@ export interface ProbeResult {
   jitter: number;
   packetLoss: number; // End-to-end
   hops: HopData[];
-  httpStatus?: number;
+  httpStatus: number;
+}
+
+export interface ProbeConfig {
+  packetSize: number; // bytes, default 64
+  probeCount: number; // per interval, default 1
+  timeout: number; // ms, default 1000
+}
+
+export interface AIAnalysisResult {
+  targetId: string;
+  analysis: string;
+  timestamp: number;
 }
 
 export interface Target {
@@ -39,10 +51,19 @@ export interface Target {
   uptimePercentage: number;
   createdAt: number;
   
+  // Custom Configuration
+  probeConfig?: ProbeConfig;
+  
+  // SLA Configuration
+  slaTarget?: number; // Percentage, e.g., 99.999
+
   // Long term stats
   totalProbes: number;
   totalPacketsSent: number;
   totalPacketsLost: number;
+
+  // AI Insights
+  aiAnalysisHistory: AIAnalysisResult[];
 }
 
 export interface User {
@@ -52,10 +73,4 @@ export interface User {
   passwordHash: string;
   role: 'admin' | 'user';
   createdAt: number;
-}
-
-export interface AIAnalysisResult {
-  targetId: string;
-  analysis: string;
-  timestamp: number;
 }
