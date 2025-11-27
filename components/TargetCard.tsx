@@ -267,6 +267,10 @@ const TargetCard: React.FC<TargetCardProps> = ({
                     <span className="text-slate-500">Packets Lost</span>
                     <span className="font-mono text-red-400">{target.totalPacketsLost.toLocaleString()}</span>
                   </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Current Jitter</span>
+                    <span className="font-mono text-yellow-200">{lastResult.jitter.toFixed(2)}ms</span>
+                  </div>
                   <div className="border-t border-slate-800 my-2 pt-2"></div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Last Packet Sent</span>

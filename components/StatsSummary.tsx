@@ -28,9 +28,25 @@ const StatsSummary: React.FC<StatsSummaryProps> = ({ targets, type }) => {
     ? "99.9999%"
     : availabilityRaw.toFixed(availabilityRaw > 99.9 ? 4 : 2) + "%";
 
-  const lossRate = totalPacketsSent > 0 
+  const historicalLossRate = totalPacketsSent > 0 
     ? (totalPacketsLost / totalPacketsSent) * 100 
     : 0;
+
+  // Calculate Current (Live) Stats based on latest probe
+  let currentSent = 0;
+  let currentLost = 0;
+
+  targets.forEach(t => {
+    const last = t.history[t.history.length - 1];
+    if (last) {
+      // Replicate simulation logic: 100 packets per probe * probeCount
+      const config = t.probeConfig || { packetSize: 64, probeCount: 1, timeout: 1000 };
+      const batchSize = 100 * (config.probeCount || 1); 
+      
+      currentSent += batchSize;
+      currentLost += Math.round(batchSize * (last.packetLoss / 100));
+    }
+  });
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -50,24 +66,29 @@ const StatsSummary: React.FC<StatsSummaryProps> = ({ targets, type }) => {
         </div>
       </div>
 
-      {/* Card 2: Packet Flow */}
+      {/* Card 2: Live Packet Flow */}
       <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-sm flex flex-col justify-between relative overflow-hidden group">
          <div className="absolute right-0 top-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
           <Activity size={48} />
         </div>
         <div>
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Packet Flow</p>
-          <div className="mt-1">
-             <div className="flex justify-between items-end mb-1">
-               <span className="text-lg font-mono text-slate-200">{totalPacketsSent.toLocaleString()}</span>
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Live Packet Flow</p>
+          <div className="mt-2 space-y-1">
+             <div className="flex justify-between items-center">
+               <span className="text-slate-400 text-xs">Out:</span>
+               <span className="text-lg font-mono font-bold text-slate-200">{currentSent.toLocaleString()}</span>
              </div>
-              <div className="flex justify-between items-end">
-               <span className="text-sm font-mono text-slate-400">{totalPacketsLost.toLocaleString()}</span>
+              <div className="flex justify-between items-center">
+               <span className="text-slate-400 text-xs">Drop:</span>
+               <span className={`text-lg font-mono font-bold ${currentLost > 0 ? 'text-red-400' : 'text-slate-200'}`}>
+                 {currentLost.toLocaleString()}
+               </span>
              </div>
           </div>
         </div>
-         <div className="mt-2 text-xs text-slate-500">
-          Loss Rate: <span className={lossRate > 1 ? 'text-red-400' : 'text-emerald-400'}>{lossRate.toFixed(3)}%</span>
+         <div className="mt-3 pt-2 border-t border-slate-800 flex justify-between items-center text-xs text-slate-500">
+          <span>Loss Rate:</span>
+          <span className={historicalLossRate > 1 ? 'text-red-400' : 'text-emerald-400'}>{historicalLossRate.toFixed(3)}%</span>
         </div>
       </div>
 
