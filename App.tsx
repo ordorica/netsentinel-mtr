@@ -193,6 +193,18 @@ const App: React.FC = () => {
     }
   };
 
+  const handleToggleStatus = (targetId: string) => {
+    const all = [...globalTargets, ...userTargets];
+    const target = all.find(t => t.id === targetId);
+    
+    if (target) {
+        const newStatus = target.status === ProbeStatus.Active ? ProbeStatus.Paused : ProbeStatus.Active;
+        const updatedTarget = { ...target, status: newStatus };
+        storage.saveTargets([updatedTarget]);
+        refreshTargets();
+    }
+  };
+
   const handleAiAnalysisComplete = (targetId: string, analysisText: string) => {
     const all = [...globalTargets, ...userTargets];
     const target = all.find(t => t.id === targetId);
@@ -445,6 +457,7 @@ const App: React.FC = () => {
                         target={target} 
                         onDelete={handleDeleteTarget}
                         onEditConfig={(t) => setEditingTarget(t)}
+                        onToggleStatus={handleToggleStatus}
                         onAnalyzeComplete={handleAiAnalysisComplete}
                         // Draggable if admin
                         draggable={user?.role === 'admin'}
@@ -483,6 +496,7 @@ const App: React.FC = () => {
                       target={target} 
                       onDelete={handleDeleteTarget}
                       onEditConfig={(t) => setEditingTarget(t)}
+                      onToggleStatus={handleToggleStatus}
                       onAnalyzeComplete={handleAiAnalysisComplete}
                       draggable={true}
                       onDragStart={(e) => onDragStart(e, index)}

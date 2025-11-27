@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { Target } from '../types';
-import { ChevronDown, ChevronUp, Globe, AlertCircle, Cpu, Shield, BarChart3, GripVertical, Settings, History } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Target, ProbeStatus, ProbeResult } from '../types';
+import { ChevronDown, ChevronUp, AlertCircle, Cpu, Shield, BarChart3, GripVertical, Settings, History, Pause, Play, Globe, TrendingUp, TrendingDown, Minus, CheckCircle2 } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip, XAxis, Brush, CartesianGrid, AreaChart, Area } from 'recharts';
 import { analyzeNetworkHealth } from '../services/geminiService';
 
@@ -8,6 +8,7 @@ interface TargetCardProps {
   target: Target;
   onDelete: (id: string) => void;
   onEditConfig?: (target: Target) => void;
+  onToggleStatus?: (id: string) => void;
   onAnalyzeComplete?: (targetId: string, result: string) => void;
   isReadOnly?: boolean;
   draggable?: boolean;
@@ -20,6 +21,7 @@ const TargetCard: React.FC<TargetCardProps> = ({
   target, 
   onDelete, 
   onEditConfig,
+  onToggleStatus,
   onAnalyzeComplete,
   isReadOnly = false,
   draggable = false,
@@ -29,6 +31,17 @@ const TargetCard: React.FC<TargetCardProps> = ({
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [loadingAi, setLoadingAi] = useState(false);
+  
+  // State for chart interaction freezing
+  const [isHoveringChart, setIsHoveringChart] = useState(false);
+  const [chartData, setChartData] = useState<ProbeResult[]>([]);
+
+  // Update chart data only if not hovering (interacting)
+  useEffect(() => {
+    if (!isHoveringChart) {
+      setChartData(target.history);
+    }
+  }, [target.history, isHoveringChart]);
 
   const lastResult = target.history[target.history.length - 1];
   const config = target.probeConfig || { packetSize: 64, probeCount: 1, timeout: 1000 };
@@ -46,7 +59,8 @@ const TargetCard: React.FC<TargetCardProps> = ({
 
   // Calculate status color (Latency/Jitter based)
   let statusIndicatorColor = "bg-green-500";
-  if (lastResult?.packetLoss > 10) statusIndicatorColor = "bg-red-500";
+  if (target.status === ProbeStatus.Paused) statusIndicatorColor = "bg-slate-500";
+  else if (lastResult?.packetLoss > 10) statusIndicatorColor = "bg-red-500";
   else if (lastResult?.latency > 150 || lastResult?.jitter > 30) statusIndicatorColor = "bg-yellow-500";
 
   // Calculate 5 Nines Availability
@@ -63,6 +77,39 @@ const TargetCard: React.FC<TargetCardProps> = ({
       availabilityColor = 'text-red-500 font-extrabold animate-pulse'; // Serious Issue
   } else if (availability < slaTarget) {
       availabilityColor = 'text-yellow-400'; // Warning: Below SLA but not critical
+  }
+
+  // Jitter Health & Trend Logic
+  const jitterValue = lastResult?.jitter || 0;
+  let jitterColor = "text-emerald-400";
+  let jitterBarColor = "bg-emerald-500";
+  let jitterLabel = "Stable";
+  
+  if (jitterValue > 30) { 
+      jitterColor = "text-red-400"; 
+      jitterBarColor = "bg-red-500";
+      jitterLabel = "Poor";
+  } else if (jitterValue > 10) { 
+      jitterColor = "text-yellow-400"; 
+      jitterBarColor = "bg-yellow-500";
+      jitterLabel = "Fair";
+  }
+
+  // Calculate Jitter Trend (compare first half of recent history to second half)
+  const recentHistory = target.history.slice(-20);
+  let jitterTrend: 'Stable' | 'Rising' | 'Falling' = 'Stable';
+  
+  if (recentHistory.length >= 10) {
+      const split = Math.floor(recentHistory.length / 2);
+      const earlyStats = recentHistory.slice(0, split);
+      const recentStats = recentHistory.slice(split);
+      
+      const earlyAvg = earlyStats.reduce((sum, h) => sum + h.jitter, 0) / earlyStats.length;
+      const recentAvg = recentStats.reduce((sum, h) => sum + h.jitter, 0) / recentStats.length;
+      
+      // Threshold of 2ms change to be considered a trend
+      if (recentAvg > earlyAvg + 2) jitterTrend = 'Rising';
+      else if (earlyAvg > recentAvg + 2) jitterTrend = 'Falling';
   }
 
   // Format to varying decimal places depending on how many nines we have
@@ -99,7 +146,8 @@ const TargetCard: React.FC<TargetCardProps> = ({
   const TargetIcon = target.isGlobal ? Shield : Globe;
   const iconColor = target.isGlobal ? "text-indigo-400" : "text-slate-400";
 
-  if (!lastResult) return <div className="p-4 bg-slate-900 rounded-lg animate-pulse">Initializing probe...</div>;
+  if (!lastResult && target.status === ProbeStatus.Active) return <div className="p-4 bg-slate-900 rounded-lg animate-pulse">Initializing probe...</div>;
+  if (!lastResult && target.status === ProbeStatus.Paused) return <div className="p-4 bg-slate-900 rounded-lg text-slate-500">Monitoring Paused</div>;
 
   return (
     <div 
@@ -131,6 +179,9 @@ const TargetCard: React.FC<TargetCardProps> = ({
               <h3 className="text-lg font-semibold text-slate-100 flex items-center gap-2 truncate">
                 <TargetIcon className={`w-4 h-4 ${iconColor} flex-shrink-0`} />
                 <span className="truncate">{target.name}</span>
+                {target.status === ProbeStatus.Paused && (
+                    <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-400 uppercase font-bold tracking-wider">Paused</span>
+                )}
               </h3>
             </div>
             <p className="text-xs text-slate-500 font-mono truncate">{target.url}</p>
@@ -152,6 +203,17 @@ const TargetCard: React.FC<TargetCardProps> = ({
               {lastResult.packetLoss.toFixed(1)}%
             </p>
           </div>
+
+          <div className="text-center min-w-[50px] hidden sm:block">
+            <p className="text-slate-500 text-[10px] uppercase tracking-wider">Jitter</p>
+            <div className="flex items-center justify-center gap-1">
+                <p className={`font-mono font-medium ${jitterValue > 30 ? 'text-yellow-400' : 'text-slate-200'}`}>{jitterValue.toFixed(1)}ms</p>
+                {jitterTrend === 'Rising' && <TrendingUp size={12} className="text-yellow-400" />}
+                {jitterTrend === 'Falling' && <TrendingDown size={12} className="text-emerald-400" />}
+                {jitterTrend === 'Stable' && <CheckCircle2 size={12} className="text-emerald-400 opacity-50" />}
+            </div>
+          </div>
+
            <div className="text-center min-w-[70px]">
             <p className="text-slate-500 text-[10px] uppercase tracking-wider">Availability</p>
              <div className="flex flex-col items-end">
@@ -199,10 +261,20 @@ const TargetCard: React.FC<TargetCardProps> = ({
             
             {/* Latency Chart with Zoom */}
             <div className="bg-slate-900/50 rounded-lg p-4 border border-slate-800">
-              <h4 className="text-xs font-bold text-slate-400 uppercase mb-4">Latency History (Interactive)</h4>
-              <div className="h-48 w-full">
+              <div className="flex justify-between items-start mb-4">
+                 <h4 className="text-xs font-bold text-slate-400 uppercase">Latency History (Interactive)</h4>
+                 {isHoveringChart && (
+                     <span className="text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded animate-pulse">Live updates paused for inspection</span>
+                 )}
+              </div>
+              
+              <div 
+                className="h-48 w-full"
+                onMouseEnter={() => setIsHoveringChart(true)}
+                onMouseLeave={() => setIsHoveringChart(false)}
+              >
                 <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-                  <LineChart data={target.history}>
+                  <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                     <XAxis 
                         dataKey="timestamp" 
@@ -243,16 +315,28 @@ const TargetCard: React.FC<TargetCardProps> = ({
                   <h4 className="text-xs font-bold text-slate-400 uppercase flex items-center gap-2">
                     <BarChart3 size={14}/> Cumulative Stats
                   </h4>
-                  {/* Settings Button */}
-                  {!isReadOnly && onEditConfig && (
-                    <button 
-                      onClick={() => onEditConfig(target)}
-                      className="text-slate-500 hover:text-indigo-400 transition-colors p-1 hover:bg-slate-800 rounded"
-                      title="Configure Probe Settings"
-                    >
-                      <Settings size={14} />
-                    </button>
-                  )}
+                  <div className="flex items-center gap-1">
+                    {/* Pause/Resume Button */}
+                    {!isReadOnly && onToggleStatus && (
+                         <button 
+                         onClick={() => onToggleStatus(target.id)}
+                         className={`p-1 rounded transition-colors ${target.status === ProbeStatus.Paused ? 'text-green-400 hover:bg-green-500/10' : 'text-yellow-400 hover:bg-yellow-500/10'}`}
+                         title={target.status === ProbeStatus.Paused ? "Resume Monitoring" : "Pause Monitoring"}
+                        >
+                            {target.status === ProbeStatus.Paused ? <Play size={14} fill="currentColor" /> : <Pause size={14} fill="currentColor" />}
+                        </button>
+                    )}
+                    {/* Settings Button */}
+                    {!isReadOnly && onEditConfig && (
+                        <button 
+                        onClick={() => onEditConfig(target)}
+                        className="text-slate-500 hover:text-indigo-400 transition-colors p-1 hover:bg-slate-800 rounded"
+                        title="Configure Probe Settings"
+                        >
+                        <Settings size={14} />
+                        </button>
+                    )}
+                  </div>
                 </div>
                 <div className="space-y-3 text-sm">
                   <div className="flex justify-between">
@@ -267,10 +351,40 @@ const TargetCard: React.FC<TargetCardProps> = ({
                     <span className="text-slate-500">Packets Lost</span>
                     <span className="font-mono text-red-400">{target.totalPacketsLost.toLocaleString()}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Current Jitter</span>
-                    <span className="font-mono text-yellow-200">{lastResult.jitter.toFixed(2)}ms</span>
+                  
+                  {/* Detailed Jitter Stats with Visual Bar */}
+                  <div className="py-2">
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-slate-500">Jitter (ms)</span>
+                      <div className="flex items-center gap-2">
+                         <span className={`text-xs font-bold ${jitterColor}`}>
+                             {jitterLabel}
+                         </span>
+                         <span className={`font-mono ${jitterColor}`}>{jitterValue.toFixed(2)}ms</span>
+                      </div>
+                    </div>
+                    {/* Visual Indicator Bar */}
+                    <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden flex">
+                        <div 
+                            className={`h-full ${jitterBarColor} transition-all duration-500 ease-out`} 
+                            style={{ width: `${Math.min(100, (jitterValue / 50) * 100)}%` }}
+                        />
+                    </div>
+                    {/* Trend Line */}
+                    <div className="flex justify-between text-[10px] mt-1">
+                        <span className="text-slate-600">Trend (Last 60s)</span>
+                        <span className={`font-medium flex items-center gap-1 ${
+                            jitterTrend === 'Rising' ? 'text-yellow-400' : 
+                            jitterTrend === 'Falling' ? 'text-emerald-400' : 'text-slate-500'
+                        }`}>
+                            {jitterTrend === 'Rising' && <TrendingUp size={10} />}
+                            {jitterTrend === 'Falling' && <TrendingDown size={10} />}
+                            {jitterTrend === 'Stable' && <CheckCircle2 size={10} className="text-emerald-400" />}
+                            {jitterTrend}
+                        </span>
+                    </div>
                   </div>
+
                   <div className="border-t border-slate-800 my-2 pt-2"></div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Last Packet Sent</span>
